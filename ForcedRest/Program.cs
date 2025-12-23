@@ -28,6 +28,7 @@ class Program
         Label label = new Label();
         label.Font = new Font("Arial", 24, FontStyle.Bold);
         label.ForeColor = Color.White;
+        label.Cursor = Cursors.Hand;
         label.AutoSize = true;
         form.Controls.Add(label);
         form.TopMost = true;
@@ -41,7 +42,7 @@ class Program
         {
             form.Location = new Point(screen.WorkingArea.Width / 2 - 50, 10);
         }
-        form.Size = new Size(300, 50);
+        form.Size = new Size(250, 50);
 
         // Make draggable
         bool dragging = false;
@@ -123,7 +124,7 @@ class Program
                     status = "Idle";
                 }
             }
-            label.Text = $"{status} {remaining:F0}";
+            label.Text = $"{remaining:F0}";
         };
         timer.Start();
 
