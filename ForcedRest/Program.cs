@@ -3,10 +3,17 @@ using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows.Forms;
 using System.Drawing;
+using Microsoft.Win32;
+using System.Net; // for log on detection
 
 class Program
 {
-    // 匯入 Windows user32.dll 函式庫
+    static string status = "EnterUsingEyes";
+    static int UsingEyeMinutes = 30;
+    static int restMinutes = 10;
+    static DateTime EndOfUsingEyes = DateTime.Now;      //placeholder
+    static DateTime EndOfRestingEyes = DateTime.Now;    //placeholder
+    // Import Windows user32.dll
     [DllImport("user32.dll")]
     public static extern bool LockWorkStation();
 
@@ -15,13 +22,14 @@ class Program
     {
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
+        SystemEvents.SessionSwitch += SystemEvents_SessionSwitch;
 
         Form form = new Form();
         Label label = new Label();
         label.Font = new Font("Arial", 24, FontStyle.Bold);
         label.ForeColor = Color.White;
         label.AutoSize = true;
-        label.Text = "Initializing...";
+//        label.Text = $"{UsingEyeMinutes:F0}";
         form.Controls.Add(label);
         form.TopMost = true;
         form.FormBorderStyle = FormBorderStyle.None;
@@ -34,7 +42,8 @@ class Program
         {
             form.Location = new Point(screen.WorkingArea.Width / 2 - 50, 10);
         }
-        form.Size = new Size(200, 50);
+        //form.Size = new Size(200, 50);
+        form.Size = new Size(300, 50);
 
         // Make draggable
         bool dragging = false;
@@ -59,46 +68,8 @@ class Program
             dragging = false;
         };
 
-        // Timer logic
-        DateTime ExpectRestTime = DateTime.Now.AddMinutes(30);
-        DateTime ExpectUnlockTime = DateTime.Now;       //placeholder
-        string status = "UsingEyes";
 
-        //Timer timer = new Timer();
-        System.Windows.Forms.Timer timer = new System.Windows.Forms.Timer();
-        timer.Interval = 1000;
-        timer.Tick += (s, e) =>
-        {
-            double remaining;
-            if (status == "UsingEyes")
-            {
-                remaining = (ExpectRestTime - DateTime.Now).TotalMinutes;
-                if (DateTime.Now >= ExpectRestTime)
-                {
-                    status = "RestingEyes";
-                    LockWorkStation();
-                    ExpectUnlockTime = DateTime.Now.AddMinutes(10);
-                }
-            }
-            else
-            {
-                remaining = (ExpectUnlockTime - DateTime.Now).TotalMinutes;
-                if (DateTime.Now >= ExpectUnlockTime)
-                {
-                    ExpectRestTime = DateTime.Now.AddMinutes(30);
-                    status = "UsingEyes";
-                }
-                else
-                {
-                    LockWorkStation();
-                    remaining = (ExpectUnlockTime - DateTime.Now).TotalMinutes;
-                }
-            }
-            label.Text = $"{remaining:F0}";
-        };
-        timer.Start();
-
-        // 讓 Label 也能觸發拖動
+        // Enable Label drag to move the form
         label.MouseDown += (s, e) =>
         {
             dragging = true;
@@ -119,6 +90,72 @@ class Program
         {
             dragging = false;
         };
+
+
+        System.Windows.Forms.Timer timer = new System.Windows.Forms.Timer();
+        timer.Interval = 1000;
+        double remaining = UsingEyeMinutes;
+        timer.Tick += (s, e) =>
+        {
+            if (status == "EnterUsingEyes")
+            {
+                EndOfUsingEyes = DateTime.Now.AddMinutes(UsingEyeMinutes);
+                status = "UsingEyes";
+            }
+            else if (status == "UsingEyes")
+            {
+                remaining = (EndOfUsingEyes - DateTime.Now).TotalMinutes;
+                if (DateTime.Now >= EndOfUsingEyes)
+                {
+                    status = "EnterRestingEyes";
+                }
+            }
+            else if (status == "EnterRestingEyes")
+            {
+                EndOfRestingEyes = DateTime.Now.AddMinutes(restMinutes);
+                status = "RestingEyes";
+                LockWorkStation();
+            }
+            else if (status == "RestingEyes")
+            {
+                remaining = (EndOfRestingEyes - DateTime.Now).TotalMinutes;
+                if (DateTime.Now >= EndOfRestingEyes)
+                {
+                    status = "Idle";
+                }
+            }
+            /*
+            else if (status == "Idle")
+            {
+                status = "Idle";
+                remaining = 0;
+            }
+            else
+            {
+                remaining = 0;
+            }
+            */
+            label.Text = $"{status} {remaining:F0}";
+        };
+        timer.Start();
+
         Application.Run(form);
     }
+
+    // The Event Handler
+    private static void SystemEvents_SessionSwitch(object sender, SessionSwitchEventArgs e)
+    {
+        if (e.Reason == SessionSwitchReason.SessionUnlock)
+        {
+            if( status == "Idle" )
+            {
+                status = "EnterUsingEyes";
+            }
+            else if( status == "RestingEyes" )
+            {
+                LockWorkStation();
+            }
+        }
+    }
+ 
 }
