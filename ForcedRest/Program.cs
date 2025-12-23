@@ -29,7 +29,6 @@ class Program
         label.Font = new Font("Arial", 24, FontStyle.Bold);
         label.ForeColor = Color.White;
         label.AutoSize = true;
-//        label.Text = $"{UsingEyeMinutes:F0}";
         form.Controls.Add(label);
         form.TopMost = true;
         form.FormBorderStyle = FormBorderStyle.None;
@@ -42,7 +41,6 @@ class Program
         {
             form.Location = new Point(screen.WorkingArea.Width / 2 - 50, 10);
         }
-        //form.Size = new Size(200, 50);
         form.Size = new Size(300, 50);
 
         // Make draggable
@@ -100,6 +98,7 @@ class Program
             if (status == "EnterUsingEyes")
             {
                 EndOfUsingEyes = DateTime.Now.AddMinutes(UsingEyeMinutes);
+                remaining = (EndOfUsingEyes - DateTime.Now).TotalMinutes;
                 status = "UsingEyes";
             }
             else if (status == "UsingEyes")
@@ -124,17 +123,6 @@ class Program
                     status = "Idle";
                 }
             }
-            /*
-            else if (status == "Idle")
-            {
-                status = "Idle";
-                remaining = 0;
-            }
-            else
-            {
-                remaining = 0;
-            }
-            */
             label.Text = $"{status} {remaining:F0}";
         };
         timer.Start();
