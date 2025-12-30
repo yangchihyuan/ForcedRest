@@ -5,6 +5,11 @@ using System.Windows.Forms;
 using System.Drawing;
 using Microsoft.Win32;
 using System.Net; // for log on detection
+using System.Globalization;
+using CsvHelper;
+using CsvHelper.Configuration.Attributes;
+using NAudio.Wave;
+using NAudio.CoreAudioApi;
 
 class SmoothLabel : Label
 {
@@ -18,153 +23,215 @@ class SmoothLabel : Label
 class Program
 {
     static string status = "EnterUsingEyes";
-    static int UsingEyeMinutes = 1;
-    static int restMinutes = 1;
+    static int UsingEyeMinutes = 30;
+    static int restMinutes = 10;
     static DateTime EndOfUsingEyes = DateTime.Now;      //placeholder
     static DateTime EndOfRestingEyes = DateTime.Now;    //placeholder
+    static List<exceptionTime> exceptionTimes = new List<exceptionTime>();
     // Import Windows user32.dll
     [DllImport("user32.dll")]
     public static extern bool LockWorkStation();
     [DllImport("user32.dll")]
     public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
-    [DllImport("winmm.dll")]
-    private static extern bool PlaySound(string pszSound, IntPtr hmod, uint fdwSound);
     private const uint SWP_NOMOVE = 0x0002;
     private const uint SWP_NOSIZE = 0x0001;
     private const uint SWP_SHOWWINDOW = 0x0040;
-    private const uint SND_FILENAME = 0x00020000;
-    private const uint SND_ASYNC = 0x0001;
     private static IntPtr HWND_TOPMOST = new IntPtr(-1);
+
+    static double remaining = UsingEyeMinutes;
+    static SmoothLabel? label;
+    static bool soundPlayed = true;
+
+    private static void PlaySoundFile(string filePath)
+    {
+        try
+        {
+            var audioFile = new AudioFileReader(filePath);
+            var outputDevice = new WasapiOut(AudioClientShareMode.Shared, 100);
+            outputDevice.Init(audioFile);
+            outputDevice.Play();
+            outputDevice.PlaybackStopped += (sender, args) =>
+            {
+                outputDevice.Dispose();
+                audioFile.Dispose();
+            };
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error playing sound: {ex.Message}");
+        }
+    }
 
     [STAThread]
     static void Main()
     {
-        Application.EnableVisualStyles();
-        Application.SetCompatibleTextRenderingDefault(false);
-        SystemEvents.SessionSwitch += SystemEvents_SessionSwitch;
-
-        Form form = new Form();
-        SmoothLabel label = new SmoothLabel();
-        label.Font = new Font("Arial", 36, FontStyle.Bold);
-        label.ForeColor = Color.White;
-        label.Cursor = Cursors.Hand;
-        label.AutoSize = true;
-        label.BackColor = Color.Transparent; // 使标签背景透明
-        form.Controls.Add(label);
-        form.TopMost = true;
-        form.FormBorderStyle = FormBorderStyle.None;
-        form.BackColor = Color.Black;
-        form.TransparencyKey = Color.Black;
-        form.ShowInTaskbar = false;
-        form.StartPosition = FormStartPosition.Manual;
-        var screen = Screen.PrimaryScreen;
-        if (screen != null)
+        try
         {
-            form.Location = new Point(screen.WorkingArea.Width / 2 - 50, 10);
+            Console.WriteLine("Starting app");
+            var version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
+            Console.WriteLine($"Version: {version}");
+            Application.EnableVisualStyles();
+            Application.SetCompatibleTextRenderingDefault(false);
+            SystemEvents.SessionSwitch += SystemEvents_SessionSwitch;
+
+            Form form = new Form();
+            label = new SmoothLabel();
+            label.Font = new Font("Arial", 36, FontStyle.Bold);
+            label.ForeColor = Color.White;
+            label.Cursor = Cursors.Hand;
+            label.AutoSize = true;
+            label.BackColor = Color.Transparent;
+            form.Controls.Add(label);
+            form.TopMost = true;
+            form.FormBorderStyle = FormBorderStyle.None;
+            form.BackColor = Color.Black;
+            form.TransparencyKey = Color.Black;
+            form.ShowInTaskbar = false;
+            form.StartPosition = FormStartPosition.Manual;
+            var screen = Screen.PrimaryScreen;
+            if (screen != null)
+            {
+                form.Location = new Point(screen.WorkingArea.Width / 2 - 50, 10);
+            }
+            form.Size = new Size(250, 50);
+
+            // Make draggable
+            bool dragging = false;
+            Point dragCursorPoint = Point.Empty;
+            Point dragFormPoint = Point.Empty;
+            form.MouseDown += (s, e) =>
+            {
+                dragging = true;
+                dragCursorPoint = Cursor.Position;
+                dragFormPoint = form.Location;
+            };
+            form.MouseMove += (s, e) =>
+            {
+                if (dragging)
+                {
+                    Point diff = Point.Subtract(Cursor.Position, new Size(dragCursorPoint));
+                    form.Location = Point.Add(dragFormPoint, new Size(diff));
+                }
+            };
+            form.MouseUp += (s, e) =>
+            {
+                dragging = false;
+            };
+
+
+            // Enable Label drag to move the form
+            label.MouseDown += (s, e) =>
+            {
+                dragging = true;
+                dragCursorPoint = Cursor.Position;
+                dragFormPoint = form.Location;
+            };
+
+            label.MouseMove += (s, e) =>
+            {
+                if (dragging)
+                {
+                    Point diff = Point.Subtract(Cursor.Position, new Size(dragCursorPoint));
+                    form.Location = Point.Add(dragFormPoint, new Size(diff));
+                }
+            };
+
+            label.MouseUp += (s, e) =>
+            {
+                dragging = false;
+            };
+
+
+            //Load the csv file of exception times
+            // Reading the file
+            Console.WriteLine("Reading CSV");
+            string exceptionFile = "exception_times.csv";
+            if (File.Exists(exceptionFile))
+            {
+                using (var reader = new StreamReader(exceptionFile))
+                using (var csv = new CsvReader(reader, CultureInfo.InvariantCulture))
+                {
+                    var records = csv.GetRecords<exceptionTime>().ToList();
+                    exceptionTimes.AddRange(records);
+
+                    foreach (var exception_time in records)
+                    {
+                        Console.WriteLine($"{exception_time.DayOfWeek}: {exception_time.Start} - {exception_time.End}");
+                    }
+                }
+            }
+            else
+            {
+                Console.WriteLine("No exception times file found.");
+            }
+
+            System.Windows.Forms.Timer timer = new System.Windows.Forms.Timer();
+            timer.Interval = 1000;
+            ResetCountDown();   
+            timer.Tick += (s, e) =>
+            {
+                DateTime now = DateTime.Now;
+                // Check for exception times
+                foreach( var exTime in exceptionTimes )
+                {
+                    if( now.DayOfWeek == (DayOfWeek)exTime.DayOfWeek )
+                    {
+                        DateTime startTime = DateTime.ParseExact(exTime.Start!, "HH:mm", CultureInfo.InvariantCulture);
+                        DateTime endTime = DateTime.ParseExact(exTime.End!, "HH:mm", CultureInfo.InvariantCulture);
+                        DateTime startDateTime = new DateTime(now.Year, now.Month, now.Day, startTime.Hour, startTime.Minute, 0);
+                        DateTime endDateTime = new DateTime(now.Year, now.Month, now.Day, endTime.Hour, endTime.Minute, 0);
+                        if( now >= startDateTime && now <= endDateTime )
+                        {
+                            // In exception time
+                            status = "Idle";
+                            label.Text = "EX";
+                            label.ForeColor = Color.Black;
+                            return;
+                        }
+                    }
+                }
+
+                if (status == "UsingEyes")
+                {
+                    remaining = (EndOfUsingEyes - now).TotalMinutes;
+                    if (now >= EndOfUsingEyes)
+                    {
+                        EndOfRestingEyes = now.AddMinutes(restMinutes);
+                        status = "RestingEyes";
+                        LockWorkStation();
+                        label.ForeColor = Color.White;
+
+                    }
+                    else if( remaining <= 1 && soundPlayed)
+                    {
+                        PlaySoundFile("sound material/cuckoo-9-94258 (mp3cut.net).wav");
+                        label.ForeColor = Color.Red;
+                        soundPlayed = false;
+                    }
+                }
+                else if (status == "RestingEyes")
+                {
+                    remaining = (EndOfRestingEyes - now).TotalMinutes;
+                    if (now >= EndOfRestingEyes)
+                    {
+                        status = "Idle";
+                        PlaySoundFile("sound material/10Minutes.wav");
+                    }
+                }
+                label.Text = $"{remaining:F0}";
+            };
+            timer.Start();
+
+            // Ensure the form is always on top
+            SetWindowPos(form.Handle, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+
+            Application.Run(form);
         }
-        form.Size = new Size(250, 50);
-
-        // Make draggable
-        bool dragging = false;
-        Point dragCursorPoint = Point.Empty;
-        Point dragFormPoint = Point.Empty;
-        form.MouseDown += (s, e) =>
+        catch (Exception ex)
         {
-            dragging = true;
-            dragCursorPoint = Cursor.Position;
-            dragFormPoint = form.Location;
-        };
-        form.MouseMove += (s, e) =>
-        {
-            if (dragging)
-            {
-                Point diff = Point.Subtract(Cursor.Position, new Size(dragCursorPoint));
-                form.Location = Point.Add(dragFormPoint, new Size(diff));
-            }
-        };
-        form.MouseUp += (s, e) =>
-        {
-            dragging = false;
-        };
-
-
-        // Enable Label drag to move the form
-        label.MouseDown += (s, e) =>
-        {
-            dragging = true;
-            dragCursorPoint = Cursor.Position;
-            dragFormPoint = form.Location;
-        };
-
-        label.MouseMove += (s, e) =>
-        {
-            if (dragging)
-            {
-                Point diff = Point.Subtract(Cursor.Position, new Size(dragCursorPoint));
-                form.Location = Point.Add(dragFormPoint, new Size(diff));
-            }
-        };
-
-        label.MouseUp += (s, e) =>
-        {
-            dragging = false;
-        };
-
-
-        System.Windows.Forms.Timer timer = new System.Windows.Forms.Timer();
-        timer.Interval = 1000;
-        double remaining = UsingEyeMinutes;
-        bool soundPlayed = false;
-        timer.Tick += (s, e) =>
-        {
-            DateTime now = DateTime.Now;
-            if (status == "EnterUsingEyes")
-            {
-                EndOfUsingEyes = now.AddMinutes(UsingEyeMinutes);
-                remaining = (EndOfUsingEyes - now).TotalMinutes;
-                status = "UsingEyes";
-                soundPlayed = true;
-                label.ForeColor = Color.White;
-            }
-            else if (status == "UsingEyes")
-            {
-                remaining = (EndOfUsingEyes - now).TotalMinutes;
-                if (now >= EndOfUsingEyes)
-                {
-                    status = "EnterRestingEyes";
-                }
-                else if( remaining <= 1 && soundPlayed)
-                {
-                    PlaySound("sound material/cuckoo-9-94258 (mp3cut.net).wav", IntPtr.Zero, SND_FILENAME | SND_ASYNC);
-                    label.ForeColor = Color.Red;
-                    soundPlayed = false;
-                }
-//                SystemSounds.Beep.Play();
-            }
-            else if (status == "EnterRestingEyes")
-            {
-                EndOfRestingEyes = now.AddMinutes(restMinutes);
-                status = "RestingEyes";
-                LockWorkStation();
-                label.ForeColor = Color.White;
-            }
-            else if (status == "RestingEyes")
-            {
-                remaining = (EndOfRestingEyes - now).TotalMinutes;
-                if (now >= EndOfRestingEyes)
-                {
-                    status = "Idle";
-                    PlaySound("sound material/10Minutes.wav", IntPtr.Zero, SND_FILENAME | SND_ASYNC);
-                }
-            }
-            label.Text = $"{remaining:F0}";
-        };
-        timer.Start();
-
-        // Ensure the form is always on top
-        SetWindowPos(form.Handle, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
-
-        Application.Run(form);
+            Console.WriteLine($"Exception: {ex.Message}");
+            Console.WriteLine(ex.StackTrace);
+        }
     }
 
     // The Event Handler
@@ -175,16 +242,11 @@ class Program
         {
             if( status == "Idle" || now >= EndOfUsingEyes.AddMinutes(restMinutes) || now >= EndOfRestingEyes )
             {
-                // Play sound when rest period ends and user unlocks
-                status = "EnterUsingEyes";
+                ResetCountDown();
             }
             else if( status == "RestingEyes" )
             {
                 LockWorkStation();
-            }
-            else if( now >= EndOfUsingEyes.AddMinutes(restMinutes) )
-            {
-                status = "EnterUsingEyes";
             }
         }
         else if (e.Reason == SessionSwitchReason.SessionLock)
@@ -192,7 +254,26 @@ class Program
             EndOfRestingEyes = now.AddMinutes(restMinutes);
         }
     }
+
+    private static void ResetCountDown()
+    {
+        DateTime now = DateTime.Now;
+        EndOfUsingEyes = now.AddMinutes(UsingEyeMinutes);
+        remaining = (EndOfUsingEyes - now).TotalMinutes;
+        status = "UsingEyes";
+        soundPlayed = true;
+        label!.ForeColor = Color.White;
+    }
  
+}
+
+public class exceptionTime
+{
+    public int DayOfWeek { get; set; }
+    [Name("Start")]
+    public string? Start { get; set; }
+    [Name("End")]
+    public string? End { get; set; }
 }
 
 //publish command:
