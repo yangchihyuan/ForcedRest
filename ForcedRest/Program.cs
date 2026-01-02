@@ -28,6 +28,7 @@ class Program
     static int restMinutes = 10;
     static DateTime StartOfUsingEyes = DateTime.Now;      //placeholder
     static DateTime EndOfUsingEyes = DateTime.Now;      //placeholder
+    static TimeSpan UsingEyeTimeSpan = TimeSpan.FromMinutes(0); //placeholder
     static DateTime EndOfRestingEyes = DateTime.Now;    //placeholder
     static DateTime StartOfRestingEyes = DateTime.Now;    //placeholder
     static List<exceptionTime> exceptionTimes = new List<exceptionTime>();
@@ -98,7 +99,27 @@ class Program
             SystemEvents.SessionSwitch += SystemEvents_SessionSwitch;
             SystemEvents.PowerModeChanged += SystemEvents_PowerModeChanged;
             SystemEvents.SessionEnding += SystemEvents_SessionEnding;
-                    
+
+            //load the Registry to get the previous EndOfRestingEyes
+            using (RegistryKey? key = Registry.CurrentUser.OpenSubKey(@"Software\ForcedRest"))
+            {
+                if (key != null)
+                {
+                    object? value = key.GetValue("EndOfRestingEyes");
+                    if (value != null)
+                    {
+                        string endOfRestingEyesStr = value.ToString()!;
+                        EndOfRestingEyes = DateTime.Parse(endOfRestingEyesStr, CultureInfo.InvariantCulture);
+                        DateTime now = DateTime.Now;
+                        if( now < EndOfRestingEyes )
+                        {
+                            status = "RestingEyes";
+                            Console.WriteLine($"Loaded EndOfRestingEyes from registry: {EndOfRestingEyes}");
+                        }
+                    }
+                }
+            }
+
             Form form = new Form();
             label = new SmoothLabel();
             label.Font = new Font("Arial", 36, FontStyle.Bold);
@@ -182,6 +203,8 @@ class Program
                     foreach (var exception_time in records)
                     {
                         Console.WriteLine($"{exception_time.DayOfWeek}: {exception_time.Start} - {exception_time.End}");
+                        exception_time.startTime = DateTime.ParseExact(exception_time.Start!, "HH:mm", CultureInfo.InvariantCulture);
+                        exception_time.endTime = DateTime.ParseExact(exception_time.End!, "HH:mm", CultureInfo.InvariantCulture);
                     }
                 }
             }
@@ -197,25 +220,24 @@ class Program
             {
                 DateTime now = DateTime.Now;
 
-                // [Debug Tip] Uncomment the line below to force a breakpoint here
-                // if (System.Diagnostics.Debugger.IsAttached) System.Diagnostics.Debugger.Break();
-
                 // Check for exception times
                 foreach( var exTime in exceptionTimes )
                 {
                     if( now.DayOfWeek == (DayOfWeek)exTime.DayOfWeek )
                     {
-                        DateTime startTime = DateTime.ParseExact(exTime.Start!, "HH:mm", CultureInfo.InvariantCulture);
-                        DateTime endTime = DateTime.ParseExact(exTime.End!, "HH:mm", CultureInfo.InvariantCulture);
-                        DateTime startDateTime = new DateTime(now.Year, now.Month, now.Day, startTime.Hour, startTime.Minute, 0);
-                        DateTime endDateTime = new DateTime(now.Year, now.Month, now.Day, endTime.Hour, endTime.Minute, 0);
-                        if( now >= startDateTime && now <= endDateTime )
+                        // Compare using TimeOfDay to ignore Date components
+                        if (now.TimeOfDay >= exTime.startTime.TimeOfDay && now.TimeOfDay < exTime.endTime.TimeOfDay)
                         {
                             // In exception time
-                            status = "Idle";
+                            status = "ExceptionTime";
                             label.Text = "EX";
                             label.ForeColor = Color.Black;
                             return;     //return mean exit the lambda function
+                        }
+                        else if( status == "ExceptionTime" )
+                        {
+                            // Exiting exception time
+                            ResetCountDown();
                         }
                     }
                 }
@@ -225,16 +247,11 @@ class Program
                     remaining = (EndOfUsingEyes - now).TotalMinutes;  
                     if (now >= EndOfUsingEyes)
                     {
-                        EndOfRestingEyes = now.AddMinutes(restMinutes);
-                        status = "RestingEyes";
                         LockWorkStation();
-                        label.ForeColor = Color.White;
-
                     }
                     else if( remaining <= 1 && soundPlayed)
                     {
                         PlaySoundFile("sound material/cuckoo-9-94258 (mp3cut.net).wav");
-//                         SpeakText("One minute remaining. Time to rest your eyes.");
                         label.ForeColor = Color.Red;
                         soundPlayed = false;
                     }
@@ -242,6 +259,7 @@ class Program
                 else if (status == "RestingEyes")
                 {
                     remaining = (EndOfRestingEyes - now).TotalMinutes;
+                    label.ForeColor = Color.Yellow;
                     if (now > EndOfRestingEyes.AddSeconds(5))       //to prevent the round to 0 issue.// In Main(), add this subscription:
                     {
                         status = "Idle";
@@ -270,7 +288,7 @@ class Program
         DateTime now = DateTime.Now;
         if (e.Reason == SessionSwitchReason.SessionUnlock)
         {
-            if( status == "Idle" || now >= EndOfUsingEyes.AddMinutes(restMinutes) || now >= StartOfRestingEyes.AddMinutes(restMinutes) )
+            if( status == "Idle" || now >= EndOfRestingEyes )
             {
                 ResetCountDown();
             }
@@ -281,7 +299,20 @@ class Program
         }
         else if (e.Reason == SessionSwitchReason.SessionLock)
         {
-            CalculateRestTime();
+            //When I call LockWorkStation(), it will trigger this event.
+            if( status == "UsingEyes" )
+            {
+                UsingEyeTimeSpan = now - StartOfUsingEyes;
+                CalculateRestTime();
+            }
+            else if( status == "RestingEyes" )
+            {
+                // Do nothing, continue resting
+            }
+            else if( status == "Idle" )
+            {
+                // Do nothing
+            }
             // System is locked
             Console.WriteLine("System locked");
         }
@@ -291,7 +322,19 @@ class Program
     {
         if (e.Mode == PowerModes.Suspend)
         {
-            CalculateRestTime();
+            if( status == "UsingEyes" )
+            {
+                UsingEyeTimeSpan = DateTime.Now - StartOfUsingEyes;
+                CalculateRestTime();
+            }
+            else if( status == "RestingEyes" )
+            {
+                // Do nothing, continue resting
+            }
+            else if( status == "Idle" )
+            {
+                // Do nothing
+            }
             // System is entering hibernation/sleep
             Console.WriteLine("System suspending (hibernation/sleep)");
         }
@@ -307,7 +350,8 @@ class Program
     // Add this method to the Program class:
     private static void SystemEvents_SessionEnding(object sender, SessionEndingEventArgs e)
     {
-        if (e.Reason == SessionEndReasons.SystemShutdown)
+        if (e.Reason == SessionEndReasons.SystemShutdown || 
+        e.Reason == SessionEndReasons.Logoff )
         {
             // The system is shutting down or rebooting.
             // Perform cleanup or save state here.
@@ -315,7 +359,7 @@ class Program
             {
                 using (RegistryKey key = Registry.CurrentUser.CreateSubKey(@"Software\ForcedRest"))
                 {
-                    key.SetValue("LastShutdownTime", DateTime.Now.ToString(CultureInfo.InvariantCulture));
+                    key.SetValue("EndOfRestingEyes", EndOfRestingEyes.ToString(CultureInfo.InvariantCulture));
                 }
             }
             catch (Exception ex)
@@ -323,11 +367,6 @@ class Program
                 Console.WriteLine($"Registry error: {ex.Message}");
             }
             Console.WriteLine("System is shutting down or rebooting.");
-        }
-        else if (e.Reason == SessionEndReasons.Logoff)
-        {
-            // The user is logging off.
-            Console.WriteLine("User is logging off.");
         }
     }
 
@@ -345,8 +384,7 @@ class Program
     {
         status = "RestingEyes";
         DateTime now = DateTime.Now;
-        TimeSpan usedTime = now - StartOfUsingEyes;
-        double usedMinutes = usedTime.TotalMinutes;     //bug: here may round to 0 if less than 0.5 minutes
+        double usedMinutes = UsingEyeTimeSpan.TotalMinutes;     //bug: here may round to 0 if less than 0.5 minutes
         double expectedRestMinutes = (usedMinutes / UsingEyeMinutes) * restMinutes;
         StartOfRestingEyes = now;
         EndOfRestingEyes = now.AddMinutes(expectedRestMinutes);
@@ -361,6 +399,11 @@ public class exceptionTime
     public string? Start { get; set; }
     [Name("End")]
     public string? End { get; set; }
+
+    public DateTime startTime;
+    public DateTime endTime;
+    public DateTime startDateTime;
+    public DateTime endDateTime;
 }
 
 //publish command:
