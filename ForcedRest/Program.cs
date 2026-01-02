@@ -10,6 +10,7 @@ using CsvHelper;
 using CsvHelper.Configuration.Attributes;
 using NAudio.Wave;
 using NAudio.CoreAudioApi;
+using System.Speech.Synthesis;
 
 class SmoothLabel : Label
 {
@@ -25,8 +26,10 @@ class Program
     static string status = "EnterUsingEyes";
     static int UsingEyeMinutes = 30;
     static int restMinutes = 10;
+    static DateTime StartOfUsingEyes = DateTime.Now;      //placeholder
     static DateTime EndOfUsingEyes = DateTime.Now;      //placeholder
     static DateTime EndOfRestingEyes = DateTime.Now;    //placeholder
+    static DateTime StartOfRestingEyes = DateTime.Now;    //placeholder
     static List<exceptionTime> exceptionTimes = new List<exceptionTime>();
     // Import Windows user32.dll
     [DllImport("user32.dll")]
@@ -47,18 +50,38 @@ class Program
         try
         {
             var audioFile = new AudioFileReader(filePath);
+            var volumeStream = new WaveChannel32(audioFile);
+            volumeStream.Volume = 3.0f;  // Increase volume (1.0f = original, 2.0f = double, etc.)
             var outputDevice = new WasapiOut(AudioClientShareMode.Shared, 100);
-            outputDevice.Init(audioFile);
+            outputDevice.Init(volumeStream);
             outputDevice.Play();
             outputDevice.PlaybackStopped += (sender, args) =>
             {
                 outputDevice.Dispose();
+                volumeStream.Dispose();
                 audioFile.Dispose();
             };
         }
         catch (Exception ex)
         {
             Console.WriteLine($"Error playing sound: {ex.Message}");
+        }
+    }
+
+    private static void SpeakText(string text)
+    {
+        try
+        {
+            using (var synthesizer = new SpeechSynthesizer())
+            {
+                synthesizer.Volume = 100;  // 0-100
+                synthesizer.Rate = 0;      // -10 to 10 (speed)
+                synthesizer.Speak(text);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error speaking text: {ex.Message}");
         }
     }
 
@@ -73,7 +96,9 @@ class Program
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
             SystemEvents.SessionSwitch += SystemEvents_SessionSwitch;
-
+            SystemEvents.PowerModeChanged += SystemEvents_PowerModeChanged;
+            SystemEvents.SessionEnding += SystemEvents_SessionEnding;
+                    
             Form form = new Form();
             label = new SmoothLabel();
             label.Font = new Font("Arial", 36, FontStyle.Bold);
@@ -171,6 +196,10 @@ class Program
             timer.Tick += (s, e) =>
             {
                 DateTime now = DateTime.Now;
+
+                // [Debug Tip] Uncomment the line below to force a breakpoint here
+                // if (System.Diagnostics.Debugger.IsAttached) System.Diagnostics.Debugger.Break();
+
                 // Check for exception times
                 foreach( var exTime in exceptionTimes )
                 {
@@ -186,14 +215,14 @@ class Program
                             status = "Idle";
                             label.Text = "EX";
                             label.ForeColor = Color.Black;
-                            return;
+                            return;     //return mean exit the lambda function
                         }
                     }
                 }
 
                 if (status == "UsingEyes")
                 {
-                    remaining = (EndOfUsingEyes - now).TotalMinutes;
+                    remaining = (EndOfUsingEyes - now).TotalMinutes;  
                     if (now >= EndOfUsingEyes)
                     {
                         EndOfRestingEyes = now.AddMinutes(restMinutes);
@@ -205,6 +234,7 @@ class Program
                     else if( remaining <= 1 && soundPlayed)
                     {
                         PlaySoundFile("sound material/cuckoo-9-94258 (mp3cut.net).wav");
+//                         SpeakText("One minute remaining. Time to rest your eyes.");
                         label.ForeColor = Color.Red;
                         soundPlayed = false;
                     }
@@ -212,10 +242,10 @@ class Program
                 else if (status == "RestingEyes")
                 {
                     remaining = (EndOfRestingEyes - now).TotalMinutes;
-                    if (now >= EndOfRestingEyes)
+                    if (now > EndOfRestingEyes.AddSeconds(5))       //to prevent the round to 0 issue.// In Main(), add this subscription:
                     {
                         status = "Idle";
-                        PlaySoundFile("sound material/10Minutes.wav");
+                        SpeakText("休息時間結束");
                     }
                 }
                 label.Text = $"{remaining:F0}";
@@ -240,7 +270,7 @@ class Program
         DateTime now = DateTime.Now;
         if (e.Reason == SessionSwitchReason.SessionUnlock)
         {
-            if( status == "Idle" || now >= EndOfUsingEyes.AddMinutes(restMinutes) || now >= EndOfRestingEyes )
+            if( status == "Idle" || now >= EndOfUsingEyes.AddMinutes(restMinutes) || now >= StartOfRestingEyes.AddMinutes(restMinutes) )
             {
                 ResetCountDown();
             }
@@ -251,18 +281,75 @@ class Program
         }
         else if (e.Reason == SessionSwitchReason.SessionLock)
         {
-            EndOfRestingEyes = now.AddMinutes(restMinutes);
+            CalculateRestTime();
+            // System is locked
+            Console.WriteLine("System locked");
+        }
+    }
+
+    private static void SystemEvents_PowerModeChanged(object sender, PowerModeChangedEventArgs e)
+    {
+        if (e.Mode == PowerModes.Suspend)
+        {
+            CalculateRestTime();
+            // System is entering hibernation/sleep
+            Console.WriteLine("System suspending (hibernation/sleep)");
+        }
+        else if (e.Mode == PowerModes.Resume)
+        {
+            // System is resuming from hibernation/sleep
+            Console.WriteLine("System resuming from hibernation/sleep");
+            // Optionally reset or adjust timers if needed
+            //ResetCountDown();
+        }
+    }
+
+    // Add this method to the Program class:
+    private static void SystemEvents_SessionEnding(object sender, SessionEndingEventArgs e)
+    {
+        if (e.Reason == SessionEndReasons.SystemShutdown)
+        {
+            // The system is shutting down or rebooting.
+            // Perform cleanup or save state here.
+            try
+            {
+                using (RegistryKey key = Registry.CurrentUser.CreateSubKey(@"Software\ForcedRest"))
+                {
+                    key.SetValue("LastShutdownTime", DateTime.Now.ToString(CultureInfo.InvariantCulture));
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Registry error: {ex.Message}");
+            }
+            Console.WriteLine("System is shutting down or rebooting.");
+        }
+        else if (e.Reason == SessionEndReasons.Logoff)
+        {
+            // The user is logging off.
+            Console.WriteLine("User is logging off.");
         }
     }
 
     private static void ResetCountDown()
     {
         DateTime now = DateTime.Now;
+        StartOfUsingEyes = now;
         EndOfUsingEyes = now.AddMinutes(UsingEyeMinutes);
-        remaining = (EndOfUsingEyes - now).TotalMinutes;
         status = "UsingEyes";
         soundPlayed = true;
         label!.ForeColor = Color.White;
+    }
+
+    private static void CalculateRestTime()
+    {
+        status = "RestingEyes";
+        DateTime now = DateTime.Now;
+        TimeSpan usedTime = now - StartOfUsingEyes;
+        double usedMinutes = usedTime.TotalMinutes;     //bug: here may round to 0 if less than 0.5 minutes
+        double expectedRestMinutes = (usedMinutes / UsingEyeMinutes) * restMinutes;
+        StartOfRestingEyes = now;
+        EndOfRestingEyes = now.AddMinutes(expectedRestMinutes);
     }
  
 }
@@ -278,3 +365,5 @@ public class exceptionTime
 
 //publish command:
 //dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeAllContentForSelfExtract=true
+//debug run command:
+//dotnet run -c Debug
