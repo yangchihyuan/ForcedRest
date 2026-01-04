@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Runtime.InteropServices;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 using System.Drawing;
 using Microsoft.Win32;
@@ -42,7 +43,7 @@ class Program
     private const uint SWP_SHOWWINDOW = 0x0040;
     private static IntPtr HWND_TOPMOST = new IntPtr(-1);
 
-    static double remaining = UsingEyeMinutes;
+    //static double remaining = UsingEyeMinutes;
     static SmoothLabel? label;
     static bool soundPlayed = true;
 
@@ -71,19 +72,38 @@ class Program
 
     private static void SpeakText(string text)
     {
-        try
+        Task.Run(async () =>
         {
-            using (var synthesizer = new SpeechSynthesizer())
+            try
             {
-                synthesizer.Volume = 100;  // 0-100
-                synthesizer.Rate = 0;      // -10 to 10 (speed)
-                synthesizer.Speak(text);
+                using (var stream = new System.IO.MemoryStream())
+                {
+                    using (var synthesizer = new SpeechSynthesizer())
+                    {
+                        synthesizer.SetOutputToWaveStream(stream);
+                        synthesizer.Volume = 100;
+                        synthesizer.Rate = 0;
+                        synthesizer.Speak(text);
+                    }
+                    stream.Position = 0;
+                    using (var waveReader = new WaveFileReader(stream))
+                    using (var volumeStream = new WaveChannel32(waveReader))
+                    using (var outputDevice = new WasapiOut(AudioClientShareMode.Shared, 100))
+                    {
+                        volumeStream.Volume = 3.0f; // Increase volume (3.0f = 300%)
+                        var tcs = new TaskCompletionSource<bool>();
+                        outputDevice.PlaybackStopped += (s, e) => tcs.TrySetResult(true);
+                        outputDevice.Init(volumeStream);
+                        outputDevice.Play();
+                        await tcs.Task;
+                    }
+                }
             }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Error speaking text: {ex.Message}");
-        }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error speaking text: {ex.Message}");
+            }
+        });
     }
 
     [STAThread]
@@ -139,7 +159,7 @@ class Program
             {
                 form.Location = new Point(screen.WorkingArea.Width / 2 - 50, 10);
             }
-            form.Size = new Size(250, 50);
+            form.Size = new Size(50, 50);
 
             // Make draggable
             bool dragging = false;
@@ -244,29 +264,42 @@ class Program
 
                 if (status == "UsingEyes")
                 {
-                    remaining = (EndOfUsingEyes - now).TotalMinutes;  
+                    double remaining= (EndOfUsingEyes - now).TotalMinutes;  
+                    //label.ForeColor = Color.White;
                     if (now >= EndOfUsingEyes)
                     {
                         LockWorkStation();
                     }
-                    else if( remaining <= 1 && soundPlayed)
+                    else if( remaining <= 1 )
                     {
-                        PlaySoundFile("sound material/cuckoo-9-94258 (mp3cut.net).wav");
-                        label.ForeColor = Color.Red;
-                        soundPlayed = false;
+                        if(soundPlayed)
+                        {
+                            PlaySoundFile("sound material/cuckoo-9-94258 (mp3cut.net).wav");
+                            label.ForeColor = Color.Red;
+                            soundPlayed = false;
+                        }
+                        TimeSpan ts = EndOfUsingEyes - now;
+                        label.Text = $"{ts.Seconds:D2}";
+
+                    }
+                    else{
+                        label.Text = $"{remaining:F0}";
                     }
                 }
                 else if (status == "RestingEyes")
                 {
-                    remaining = (EndOfRestingEyes - now).TotalMinutes;
                     label.ForeColor = Color.Yellow;
-                    if (now > EndOfRestingEyes.AddSeconds(5))       //to prevent the round to 0 issue.// In Main(), add this subscription:
+                    if (now > EndOfRestingEyes.AddSeconds(1))       //to prevent the round to 0 issue.// In Main(), add this subscription:
                     {
                         status = "Idle";
+                        Console.WriteLine(now.ToString() + " Change to Idle");
                         SpeakText("休息時間結束");
                     }
+                    TimeSpan ts = EndOfRestingEyes - now;
+                    if (ts.TotalSeconds < 0) ts = TimeSpan.Zero;
+                    label.Text = $"{(int)ts.TotalMinutes}:{ts.Seconds:D2}";
                 }
-                label.Text = $"{remaining:F0}";
+                //Console.WriteLine(now.ToString() + " Status: " + status + $" Remaining: {remaining:F2} minutes");
             };
             timer.Start();
 
@@ -291,6 +324,7 @@ class Program
             if( status == "Idle" || now >= EndOfRestingEyes )
             {
                 ResetCountDown();
+                Console.WriteLine(now.ToString() + "System Unlocked");
             }
             else if( status == "RestingEyes" )
             {
@@ -314,7 +348,8 @@ class Program
                 // Do nothing
             }
             // System is locked
-            Console.WriteLine("System locked");
+            // If Suspend the system, will this event be triggered first?
+            Console.WriteLine("System locked" + now.ToString());
         }
     }
 
@@ -336,11 +371,15 @@ class Program
                 // Do nothing
             }
             // System is entering hibernation/sleep
+            DateTime now = DateTime.Now;
+            Console.WriteLine(now.ToString());
             Console.WriteLine("System suspending (hibernation/sleep)");
         }
         else if (e.Mode == PowerModes.Resume)
         {
             // System is resuming from hibernation/sleep
+            DateTime now = DateTime.Now;
+            Console.WriteLine(now.ToString());
             Console.WriteLine("System resuming from hibernation/sleep");
             // Optionally reset or adjust timers if needed
             //ResetCountDown();
@@ -388,6 +427,7 @@ class Program
         double expectedRestMinutes = (usedMinutes / UsingEyeMinutes) * restMinutes;
         StartOfRestingEyes = now;
         EndOfRestingEyes = now.AddMinutes(expectedRestMinutes);
+        Console.WriteLine(now.ToString() + " expectedRestMinutes: " + expectedRestMinutes.ToString() + "    EndOfRestingEyes: " + EndOfRestingEyes.ToString());
     }
  
 }
