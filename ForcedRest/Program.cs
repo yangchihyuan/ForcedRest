@@ -24,14 +24,15 @@ class SmoothLabel : Label
 
 class Program
 {
-    static string status = "EnterUsingEyes";
+    static string status = "UsingEyes";
     static int UsingEyeMinutes = 30;
     static int restMinutes = 10;
     static DateTime StartOfUsingEyes = DateTime.Now;      //placeholder
-    static DateTime EndOfUsingEyes = DateTime.Now;      //placeholder
+    static DateTime EndOfUsingEyes = StartOfUsingEyes.AddMinutes(UsingEyeMinutes);
     static TimeSpan UsingEyeTimeSpan = TimeSpan.FromMinutes(0); //placeholder
-    static DateTime EndOfRestingEyes = DateTime.Now;    //placeholder
-    static DateTime StartOfRestingEyes = DateTime.Now;    //placeholder
+    static DateTime StartOfRestingEyes = DateTime.MinValue;    //placeholder
+    static DateTime EndOfRestingEyes = DateTime.MinValue;    //placeholder
+    static DateTime LogoutTime = DateTime.MinValue;    //placeholder
     static List<exceptionTime> exceptionTimes = new List<exceptionTime>();
     // Import Windows user32.dll
     [DllImport("user32.dll")]
@@ -130,13 +131,24 @@ class Program
                     {
                         string endOfRestingEyesStr = value.ToString()!;
                         EndOfRestingEyes = DateTime.Parse(endOfRestingEyesStr, CultureInfo.InvariantCulture);
-                        DateTime now = DateTime.Now;
-                        if( now < EndOfRestingEyes )
-                        {
-                            status = "RestingEyes";
-                            Console.WriteLine($"Loaded EndOfRestingEyes from registry: {EndOfRestingEyes}");
-                        }
                     }
+
+                    value = null;
+                    value = key.GetValue("EndOfUsingEyes");
+                    if (value != null)
+                    {
+                        string endOfUsingEyesStr = value.ToString()!;
+                        EndOfUsingEyes = DateTime.Parse(endOfUsingEyesStr, CultureInfo.InvariantCulture);
+                    }
+
+                    value = null;
+                    value = key.GetValue("LogoutTime");
+                    if (value != null)
+                    {
+                        string logoutTimeStr = value.ToString()!;
+                        LogoutTime = DateTime.Parse(logoutTimeStr, CultureInfo.InvariantCulture);
+                    }
+
                 }
             }
 
@@ -235,7 +247,20 @@ class Program
 
             System.Windows.Forms.Timer timer = new System.Windows.Forms.Timer();
             timer.Interval = 1000;
-            ResetCountDown();   
+
+            //Judge if need to reset the countdown
+            DateTime now = DateTime.Now;
+            if( now >= EndOfRestingEyes )
+            {
+                ResetCountDown();
+            }
+            else
+            {
+                status = "RestingEyes";
+                LockWorkStation();
+            }
+
+
             timer.Tick += (s, e) =>
             {
                 DateTime now = DateTime.Now;
@@ -392,6 +417,8 @@ class Program
         if (e.Reason == SessionEndReasons.SystemShutdown || 
         e.Reason == SessionEndReasons.Logoff )
         {
+            UsingEyeTimeSpan = DateTime.Now - StartOfUsingEyes;
+            CalculateRestTime();            
             // The system is shutting down or rebooting.
             // Perform cleanup or save state here.
             try
@@ -399,6 +426,8 @@ class Program
                 using (RegistryKey key = Registry.CurrentUser.CreateSubKey(@"Software\ForcedRest"))
                 {
                     key.SetValue("EndOfRestingEyes", EndOfRestingEyes.ToString(CultureInfo.InvariantCulture));
+                    key.SetValue("EndOfUsingEyes", EndOfUsingEyes.ToString(CultureInfo.InvariantCulture));
+                    key.SetValue("LogoutTime", DateTime.Now.ToString(CultureInfo.InvariantCulture));
                 }
             }
             catch (Exception ex)
