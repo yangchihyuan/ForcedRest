@@ -15,6 +15,11 @@ using System.Speech.Synthesis;
 
 class SmoothLabel : Label
 {
+    public SmoothLabel()
+    {
+        this.SetStyle(ControlStyles.StandardDoubleClick, true);
+    }
+
     protected override void OnPaint(PaintEventArgs e)
     {
         e.Graphics.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAlias;
@@ -43,10 +48,11 @@ class Program
     private const uint SWP_NOSIZE = 0x0001;
     private const uint SWP_SHOWWINDOW = 0x0040;
     private static IntPtr HWND_TOPMOST = new IntPtr(-1);
-
-    //static double remaining = UsingEyeMinutes;
+    static double remaining = UsingEyeMinutes;
     static SmoothLabel? label;
     static bool soundPlayed = true;
+
+    static int NumberOfExtensions = 0;
 
     private static void PlaySoundFile(string filePath)
     {
@@ -219,6 +225,16 @@ class Program
                 dragging = false;
             };
 
+            label.DoubleClick += (s, e) =>
+            {
+                if (remaining < 1 && status == "UsingEyes" && NumberOfExtensions < 5)
+                {
+                    EndOfUsingEyes += TimeSpan.FromMinutes(1);
+                    NumberOfExtensions += 1;
+                    soundPlayed = true;
+                    label.ForeColor = Color.White;
+                }
+            };
 
             //Load the csv file of exception times
             // Reading the file
@@ -289,8 +305,7 @@ class Program
 
                 if (status == "UsingEyes")
                 {
-                    double remaining= (EndOfUsingEyes - now).TotalMinutes;  
-                    //label.ForeColor = Color.White;
+                    remaining= (EndOfUsingEyes - now).TotalMinutes;  
                     if (now >= EndOfUsingEyes)
                     {
                         LockWorkStation();
@@ -304,11 +319,16 @@ class Program
                             soundPlayed = false;
                         }
                         TimeSpan ts = EndOfUsingEyes - now;
-                        label.Text = $"{ts.Seconds:D2}";
-
+                        if (NumberOfExtensions > 0)
+                            label.Text = $"{ts.Seconds:D2}+{NumberOfExtensions}";
+                        else
+                            label.Text = $"{ts.Seconds:D2}";
                     }
                     else{
-                        label.Text = $"{remaining:F0}";
+                        if (NumberOfExtensions > 0)
+                            label.Text = $"{remaining:F0}+{NumberOfExtensions}";
+                        else
+                            label.Text = $"{remaining:F0}";
                     }
                 }
                 else if (status == "RestingEyes")
@@ -446,6 +466,7 @@ class Program
         status = "UsingEyes";
         soundPlayed = true;
         label!.ForeColor = Color.White;
+        NumberOfExtensions = 0;
     }
 
     private static void CalculateRestTime()
@@ -455,7 +476,7 @@ class Program
         double usedMinutes = UsingEyeTimeSpan.TotalMinutes;     //bug: here may round to 0 if less than 0.5 minutes
         double expectedRestMinutes = (usedMinutes / UsingEyeMinutes) * restMinutes;
         StartOfRestingEyes = now;
-        EndOfRestingEyes = now.AddMinutes(expectedRestMinutes);
+        EndOfRestingEyes = now.AddMinutes(expectedRestMinutes + NumberOfExtensions);
         Console.WriteLine(now.ToString() + " expectedRestMinutes: " + expectedRestMinutes.ToString() + "    EndOfRestingEyes: " + EndOfRestingEyes.ToString());
     }
  
