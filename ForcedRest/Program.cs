@@ -54,6 +54,24 @@ class Program
 
     static int NumberOfExtensions = 0;
 
+    private static readonly string LogDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ForcedRest");
+    private static readonly string LogFilePath = Path.Combine(LogDir, "forcedrest.log");
+
+    static void WriteLog(string message)
+    {
+        Console.WriteLine(message);
+        try
+        {
+            Directory.CreateDirectory(LogDir);
+            File.AppendAllText(LogFilePath, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {message}{Environment.NewLine}");
+        }
+        catch
+        {
+            // Ignore logging errors; app should continue.
+        }
+    }
+
+
     private static void PlaySoundFile(string filePath)
     {
         try
@@ -118,9 +136,11 @@ class Program
     {
         try
         {
-            Console.WriteLine("Starting app");
+            WriteLog("Application started");
+
             var version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
-            Console.WriteLine($"Version: {version}");
+            WriteLog($"Version: {version}");
+//            Console.WriteLine($"Version: {version}");
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
             SystemEvents.SessionSwitch += SystemEvents_SessionSwitch;
@@ -145,6 +165,7 @@ class Program
                     {
                         string endOfUsingEyesStr = value.ToString()!;
                         EndOfUsingEyes = DateTime.Parse(endOfUsingEyesStr, CultureInfo.InvariantCulture);
+                        WriteLog($"Loaded EndOfUsingEyes from registry: {EndOfUsingEyes}");
                     }
 
                     value = null;
@@ -227,7 +248,7 @@ class Program
 
             label.DoubleClick += (s, e) =>
             {
-                if (remaining < 1 && status == "UsingEyes" && NumberOfExtensions < 5)
+                if (remaining < 1 && status == "UsingEyes" && NumberOfExtensions < 12)
                 {
                     EndOfUsingEyes += TimeSpan.FromMinutes(1);
                     NumberOfExtensions += 1;
@@ -382,7 +403,7 @@ class Program
             if( status == "UsingEyes" )
             {
                 UsingEyeTimeSpan = now - StartOfUsingEyes;
-                CalculateRestTime();
+                EnterRestMode();
             }
             else if( status == "RestingEyes" )
             {
@@ -405,7 +426,21 @@ class Program
             if( status == "UsingEyes" )
             {
                 UsingEyeTimeSpan = DateTime.Now - StartOfUsingEyes;
-                CalculateRestTime();
+                //If I still have time remaining, save them into the registry, and when system resume, I can decide whether to continue the countdown or reset it.
+                try
+                {
+                    using (RegistryKey key = Registry.CurrentUser.CreateSubKey(@"Software\ForcedRest"))
+                    {
+                        key.SetValue("StartOfUsingEyes", StartOfUsingEyes.ToString(CultureInfo.InvariantCulture));
+                        WriteLog($"Suspendt: Saved EndOfRestingEyes to registry: {EndOfRestingEyes}");
+                        key.SetValue("SuspendTime", DateTime.Now.ToString(CultureInfo.InvariantCulture));
+                        key.SetValue("UsingEyeTimeSpan", UsingEyeTimeSpan.TotalSeconds.ToString(CultureInfo.InvariantCulture));
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Registry error: {ex.Message}");
+                }
             }
             else if( status == "RestingEyes" )
             {
@@ -417,17 +452,33 @@ class Program
             }
             // System is entering hibernation/sleep
             DateTime now = DateTime.Now;
-            Console.WriteLine(now.ToString());
-            Console.WriteLine("System suspending (hibernation/sleep)");
+            WriteLog("System suspending (hibernation/sleep)");
         }
         else if (e.Mode == PowerModes.Resume)
         {
             // System is resuming from hibernation/sleep
-            DateTime now = DateTime.Now;
-            Console.WriteLine(now.ToString());
-            Console.WriteLine("System resuming from hibernation/sleep");
-            // Optionally reset or adjust timers if needed
-            //ResetCountDown();
+            WriteLog("System resuming from hibernation/sleep");
+            using (RegistryKey? key = Registry.CurrentUser.OpenSubKey(@"Software\ForcedRest"))
+            {
+                if (key != null)
+                {
+                    object? value = key.GetValue("UsingEyeTimeSpan");
+                    if (value != null)
+                    {
+                        string usingEyeTimeSpanStr = value.ToString()!;
+                        double usingEyeTimeSpanSeconds = double.Parse(usingEyeTimeSpanStr, CultureInfo.InvariantCulture);
+                        UsingEyeTimeSpan = TimeSpan.FromSeconds(usingEyeTimeSpanSeconds);
+                    }
+                }
+            }
+            //Take the rest time into account when resume
+            //There are 2 variables:
+            //1. The EyeUsingTime, which could be 0 to 35.
+            //2. The HibernationDuration, which could be any value.
+            //3. The RestTime, it is determined by the NumberOfExtensions.
+            //The rules:
+            //1. if the HibernationDuration is greater than the RestTime, then directly reset the countdown.
+            //2. if there are remaining, restore it accordingly.
         }
     }
 
@@ -438,7 +489,7 @@ class Program
         e.Reason == SessionEndReasons.Logoff )
         {
             UsingEyeTimeSpan = DateTime.Now - StartOfUsingEyes;
-            CalculateRestTime();            
+            EnterRestMode();            
             // The system is shutting down or rebooting.
             // Perform cleanup or save state here.
             try
@@ -447,6 +498,7 @@ class Program
                 {
                     key.SetValue("EndOfRestingEyes", EndOfRestingEyes.ToString(CultureInfo.InvariantCulture));
                     key.SetValue("EndOfUsingEyes", EndOfUsingEyes.ToString(CultureInfo.InvariantCulture));
+                    WriteLog($"Shutdown or Logout: Saved EndOfRestingEyes to registry: {EndOfRestingEyes}");
                     key.SetValue("LogoutTime", DateTime.Now.ToString(CultureInfo.InvariantCulture));
                 }
             }
@@ -469,14 +521,14 @@ class Program
         NumberOfExtensions = 0;
     }
 
-    private static void CalculateRestTime()
+    private static void EnterRestMode()
     {
         status = "RestingEyes";
         DateTime now = DateTime.Now;
         double usedMinutes = UsingEyeTimeSpan.TotalMinutes;     //bug: here may round to 0 if less than 0.5 minutes
         double expectedRestMinutes = (usedMinutes / UsingEyeMinutes) * restMinutes;
         StartOfRestingEyes = now;
-        EndOfRestingEyes = now.AddMinutes(expectedRestMinutes + NumberOfExtensions);
+        EndOfRestingEyes = now.AddMinutes(expectedRestMinutes) + TimeSpan.FromSeconds(NumberOfExtensions * 20);
         Console.WriteLine(now.ToString() + " expectedRestMinutes: " + expectedRestMinutes.ToString() + "    EndOfRestingEyes: " + EndOfRestingEyes.ToString());
     }
  
