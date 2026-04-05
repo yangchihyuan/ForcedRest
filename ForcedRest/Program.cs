@@ -189,7 +189,7 @@ class Program
             form.Controls.Add(label);
             form.TopMost = true;
             form.FormBorderStyle = FormBorderStyle.None;
-            form.BackColor = Color.Black;
+            form.BackColor = Color.Black; //Color.Red;
             form.TransparencyKey = Color.Black;
             form.ShowInTaskbar = false;
             form.StartPosition = FormStartPosition.Manual;
@@ -198,7 +198,7 @@ class Program
             {
                 form.Location = new Point(screen.WorkingArea.Width / 2 - 50, 10);
             }
-            form.Size = new Size(50, 50);
+            form.Size = new Size(180, 50);
 
             // Make draggable
             bool dragging = false;
