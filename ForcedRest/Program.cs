@@ -528,7 +528,8 @@ class Program
         double usedMinutes = UsingEyeTimeSpan.TotalMinutes;     //bug: here may round to 0 if less than 0.5 minutes
         double expectedRestMinutes = (usedMinutes / UsingEyeMinutes) * restMinutes;
         StartOfRestingEyes = now;
-        EndOfRestingEyes = now.AddMinutes(expectedRestMinutes) + TimeSpan.FromSeconds(NumberOfExtensions * 20);
+//        EndOfRestingEyes = now.AddMinutes(expectedRestMinutes) + TimeSpan.FromSeconds(NumberOfExtensions * 20);
+        EndOfRestingEyes = now.AddMinutes(expectedRestMinutes);
         Console.WriteLine(now.ToString() + " expectedRestMinutes: " + expectedRestMinutes.ToString() + "    EndOfRestingEyes: " + EndOfRestingEyes.ToString());
     }
  
