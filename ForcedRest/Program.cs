@@ -32,6 +32,7 @@ class Program
     static string status = "UsingEyes";
     static int UsingEyeMinutes = 30;
     static int restMinutes = 10;
+    const int MaxNumberOfExtensions = 3;    //the maximum number of extensions allowed for each using eye session. Each extension will add 1 minute to the using eye time.
     static DateTime StartOfUsingEyes = DateTime.Now;      //placeholder
     static DateTime EndOfUsingEyes = StartOfUsingEyes.AddMinutes(UsingEyeMinutes);
     static TimeSpan UsingEyeTimeSpan = TimeSpan.FromMinutes(0); //placeholder
@@ -248,7 +249,7 @@ class Program
 
             label.DoubleClick += (s, e) =>
             {
-                if (remaining < 1 && status == "UsingEyes" && NumberOfExtensions < 12)
+                if (remaining < 1 && status == "UsingEyes" && NumberOfExtensions < MaxNumberOfExtensions)
                 {
                     EndOfUsingEyes += TimeSpan.FromMinutes(1);
                     NumberOfExtensions += 1;
