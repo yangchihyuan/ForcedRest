@@ -32,7 +32,7 @@ class Program
     static string status = "UsingEyes";
     static int UsingEyeMinutes = 30;
     static int restMinutes = 10;
-    const int MaxNumberOfExtensions = 3;    //the maximum number of extensions allowed for each using eye session. Each extension will add 1 minute to the using eye time.
+    const int MaxNumberOfExtensions = 5;    //the maximum number of extensions allowed for each using eye session. Each extension will add 1 minute to the using eye time.
     static DateTime StartOfUsingEyes = DateTime.Now;      //placeholder
     static DateTime EndOfUsingEyes = StartOfUsingEyes.AddMinutes(UsingEyeMinutes);
     static TimeSpan UsingEyeTimeSpan = TimeSpan.FromMinutes(0); //placeholder
