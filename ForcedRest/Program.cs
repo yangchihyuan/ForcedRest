@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -215,8 +215,16 @@ class Program
             {
                 if (dragging)
                 {
-                    Point diff = Point.Subtract(Cursor.Position, new Size(dragCursorPoint));
-                    form.Location = Point.Add(dragFormPoint, new Size(diff));
+                    if (e.Button == MouseButtons.Left)
+                    {
+                        Point diff = Point.Subtract(Cursor.Position, new Size(dragCursorPoint));
+                        form.Location = Point.Add(dragFormPoint, new Size(diff));
+                    }
+                    else
+                    {
+                        // 如果滑鼠沒有被按住，但卻在拖曳狀態，代表錯失了 MouseUp 事件
+                        dragging = false;
+                    }
                 }
             };
             form.MouseUp += (s, e) =>
@@ -237,8 +245,16 @@ class Program
             {
                 if (dragging)
                 {
-                    Point diff = Point.Subtract(Cursor.Position, new Size(dragCursorPoint));
-                    form.Location = Point.Add(dragFormPoint, new Size(diff));
+                    if (e.Button == MouseButtons.Left)
+                    {
+                        Point diff = Point.Subtract(Cursor.Position, new Size(dragCursorPoint));
+                        form.Location = Point.Add(dragFormPoint, new Size(diff));
+                    }
+                    else
+                    {
+                        // 如果滑鼠沒有被按住，但卻在拖曳狀態，代表錯失了 MouseUp 事件
+                        dragging = false;
+                    }
                 }
             };
 
