@@ -12,6 +12,7 @@ using CsvHelper.Configuration.Attributes;
 using NAudio.Wave;
 using NAudio.CoreAudioApi;
 using System.Speech.Synthesis;
+using System.Speech.Recognition;
 
 class SmoothLabel : Label
 {
@@ -32,6 +33,7 @@ class Program
     static string status = "UsingEyes";
     static int UsingEyeMinutes = 30;
     static int restMinutes = 10;
+    static SpeechRecognitionEngine? recognizer;
     const int MaxNumberOfExtensions = 5;    //the maximum number of extensions allowed for each using eye session. Each extension will add 1 minute to the using eye time.
     static DateTime StartOfUsingEyes = DateTime.Now;      //placeholder
     static DateTime EndOfUsingEyes = StartOfUsingEyes.AddMinutes(UsingEyeMinutes);
@@ -92,7 +94,7 @@ class Program
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Error playing sound: {ex.Message}");
+            WriteLog($"Error playing sound: {ex.Message}");
         }
     }
 
@@ -106,10 +108,27 @@ class Program
                 {
                     using (var synthesizer = new SpeechSynthesizer())
                     {
+                        // Find a Chinese voice if available
+                        InstalledVoice? chineseVoice = null;
+                        foreach (var v in synthesizer.GetInstalledVoices())
+                        {
+                            if (v.Enabled && v.VoiceInfo.Culture.Name.StartsWith("zh", StringComparison.OrdinalIgnoreCase))
+                            {
+                                chineseVoice = v;
+                                break;
+                            }
+                        }
+
+                        if (chineseVoice != null)
+                        {
+                            synthesizer.SelectVoice(chineseVoice.VoiceInfo.Name);
+                        }
+
                         synthesizer.SetOutputToWaveStream(stream);
                         synthesizer.Volume = 100;
                         synthesizer.Rate = 0;
                         synthesizer.Speak(text);
+                        synthesizer.SetOutputToNull();
                     }
                     stream.Position = 0;
                     using (var waveReader = new WaveFileReader(stream))
@@ -127,9 +146,94 @@ class Program
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error speaking text: {ex.Message}");
+                WriteLog($"Error speaking text: {ex.Message}");
             }
         });
+    }
+
+    private static void ExtendUsingEyeTime(bool speakConfirmation)
+    {
+        if (label != null && label.InvokeRequired)
+        {
+            label.Invoke(new Action(() => ExtendUsingEyeTime(speakConfirmation)));
+            return;
+        }
+
+        if (remaining < 1 && status == "UsingEyes" && NumberOfExtensions < MaxNumberOfExtensions)
+        {
+            EndOfUsingEyes += TimeSpan.FromMinutes(1);
+            NumberOfExtensions += 1;
+            soundPlayed = true;
+            if (label != null)
+            {
+                label.ForeColor = Color.White;
+            }
+            WriteLog($"Extended using eye time. SpeakConfirmation: {speakConfirmation}");
+            if (speakConfirmation)
+            {
+                SpeakText("已延長一分鐘");
+            }
+        }
+    }
+
+    private static void InitializeSpeechRecognition()
+    {
+        try
+        {
+            // Find a Chinese recognizer if available
+            RecognizerInfo? chineseInfo = null;
+            foreach (var r in SpeechRecognitionEngine.InstalledRecognizers())
+            {
+                if (r.Culture.Name.StartsWith("zh", StringComparison.OrdinalIgnoreCase))
+                {
+                    chineseInfo = r;
+                    break;
+                }
+            }
+
+            if (chineseInfo != null)
+            {
+                recognizer = new SpeechRecognitionEngine(chineseInfo);
+                WriteLog($"Using Chinese speech recognizer: {chineseInfo.Name} ({chineseInfo.Culture})");
+            }
+            else
+            {
+                recognizer = new SpeechRecognitionEngine();
+                WriteLog($"Using default speech recognizer: {recognizer.RecognizerInfo.Name} ({recognizer.RecognizerInfo.Culture})");
+            }
+
+            recognizer.SetInputToDefaultAudioDevice();
+
+            Choices commands = new Choices();
+            commands.Add(new string[] { 
+                "延長", "加一分鐘", "多一分鐘", "延長時間", "加時間", "延", "等一下", "等會", "再一分鐘", "不要鎖", "延一分鐘", "多給一分鐘",
+                "extend", "one minute", "more time", "wait", "add time", "one more minute", "add a minute" 
+            });
+
+            GrammarBuilder gb = new GrammarBuilder();
+            gb.Culture = recognizer.RecognizerInfo.Culture;
+            gb.Append(commands);
+            Grammar grammar = new Grammar(gb);
+
+            recognizer.LoadGrammar(grammar);
+            recognizer.SpeechRecognized += SpeechRecognizer_SpeechRecognized;
+            recognizer.RecognizeAsync(RecognizeMode.Multiple);
+
+            WriteLog("Speech recognition successfully initialized and started.");
+        }
+        catch (Exception ex)
+        {
+            WriteLog($"Failed to initialize speech recognition: {ex.Message}");
+        }
+    }
+
+    private static void SpeechRecognizer_SpeechRecognized(object? sender, SpeechRecognizedEventArgs e)
+    {
+        WriteLog($"Speech recognized: {e.Result.Text} (Confidence: {e.Result.Confidence})");
+        if (e.Result.Confidence >= 0.5f)
+        {
+            ExtendUsingEyeTime(true);
+        }
     }
 
     [STAThread]
@@ -265,13 +369,7 @@ class Program
 
             label.DoubleClick += (s, e) =>
             {
-                if (remaining < 1 && status == "UsingEyes" && NumberOfExtensions < MaxNumberOfExtensions)
-                {
-                    EndOfUsingEyes += TimeSpan.FromMinutes(1);
-                    NumberOfExtensions += 1;
-                    soundPlayed = true;
-                    label.ForeColor = Color.White;
-                }
+                ExtendUsingEyeTime(false);
             };
 
             //Load the csv file of exception times
@@ -388,6 +486,8 @@ class Program
 
             // Ensure the form is always on top
             SetWindowPos(form.Handle, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+
+            InitializeSpeechRecognition();
 
             Application.Run(form);
         }
