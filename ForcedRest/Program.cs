@@ -420,7 +420,7 @@ class Program
                 // Check for exception times
                 foreach( var exTime in exceptionTimes )
                 {
-                    if( now.DayOfWeek == (DayOfWeek)exTime.DayOfWeek )
+                    if( (int)now.DayOfWeek == exTime.DayOfWeek % 7)
                     {
                         // Compare using TimeOfDay to ignore Date components
                         if (now.TimeOfDay >= exTime.startTime.TimeOfDay && now.TimeOfDay < exTime.endTime.TimeOfDay)
