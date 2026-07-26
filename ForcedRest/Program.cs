@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -374,27 +374,39 @@ class Program
 
             //Load the csv file of exception times
             // Reading the file
-            Console.WriteLine("Reading CSV");
-            string exceptionFile = "exception_times.csv";
+            string? executableDirectory = Path.GetDirectoryName(Environment.ProcessPath);
+            string searchDirectory = !string.IsNullOrWhiteSpace(executableDirectory)
+                ? executableDirectory
+                : AppDomain.CurrentDomain.BaseDirectory;
+            string exceptionFile = Path.Combine(searchDirectory, "exception_times.csv");
+            WriteLog($"Reading CSV from: {exceptionFile}");
             if (File.Exists(exceptionFile))
             {
-                using (var reader = new StreamReader(exceptionFile))
-                using (var csv = new CsvReader(reader, CultureInfo.InvariantCulture))
+                try
                 {
-                    var records = csv.GetRecords<exceptionTime>().ToList();
-                    exceptionTimes.AddRange(records);
-
-                    foreach (var exception_time in records)
+                    using (var reader = new StreamReader(exceptionFile))
+                    using (var csv = new CsvReader(reader, CultureInfo.InvariantCulture))
                     {
-                        Console.WriteLine($"{exception_time.DayOfWeek}: {exception_time.Start} - {exception_time.End}");
-                        exception_time.startTime = DateTime.ParseExact(exception_time.Start!, "HH:mm", CultureInfo.InvariantCulture);
-                        exception_time.endTime = DateTime.ParseExact(exception_time.End!, "HH:mm", CultureInfo.InvariantCulture);
+                        var records = csv.GetRecords<exceptionTime>().ToList();
+                        exceptionTimes.AddRange(records);
+
+                        foreach (var exception_time in records)
+                        {
+                            WriteLog($"Loaded exception: DayOfWeek={exception_time.DayOfWeek}, Start={exception_time.Start}, End={exception_time.End}");
+                            exception_time.startTime = DateTime.ParseExact(exception_time.Start!, "HH:mm", CultureInfo.InvariantCulture);
+                            exception_time.endTime = DateTime.ParseExact(exception_time.End!, "HH:mm", CultureInfo.InvariantCulture);
+                        }
                     }
+                }
+                catch (Exception ex)
+                {
+                    WriteLog($"Error parsing CSV: {ex.Message}");
+                    WriteLog(ex.StackTrace ?? "");
                 }
             }
             else
             {
-                Console.WriteLine("No exception times file found.");
+                WriteLog($"No exception times file found at {exceptionFile}");
             }
 
             System.Windows.Forms.Timer timer = new System.Windows.Forms.Timer();
@@ -427,7 +439,7 @@ class Program
                         {
                             // In exception time
                             status = "ExceptionTime";
-                            label.Text = "EX";
+                            label.Text = "EX";                  //I didn't see the EX,
                             label.ForeColor = Color.Black;
                             return;     //return mean exit the lambda function
                         }
